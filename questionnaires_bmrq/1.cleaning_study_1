@@ -1,0 +1,238 @@
+# Date: 20 July
+# Author:   Anya Rozin
+# Purpose:  # This is to clean and organize BMRQ and questionnaire data
+# Note:     Study 1 (100 and 200)
+
+
+# clean environment
+rm(list = ls())
+
+library(tidyverse)
+
+# 1. Folder path
+input_directory <- "/Users/music/Desktop/code/bmrq/data_in/study1"
+
+# 2. Get all CSV files
+file_list <- list.files(
+  path = input_directory,
+  pattern = "\\.csv$",
+  full.names = TRUE
+)
+
+#--------------------------------------------------
+# Import BMRQ and Questionnaire data
+#--------------------------------------------------
+
+# Import the behavioural task (B) and questionnaire (Q) files for
+# the attentive (100s) and distracted (200s) participant groups.
+
+df_100s_b <- read_csv(file_list[grepl("100s_BMRQ", file_list)])
+df_100s_q <- read_csv(file_list[grepl("100s_Questionnaire", file_list)])
+df_200s_b <- read_csv(file_list[grepl("200s_BMRQ", file_list)])
+df_200s_q <- read_csv(file_list[grepl("200s_Questionnaire", file_list)])
+
+##--------------------------------------------------
+# Calculate total BMRQ score
+#--------------------------------------------------
+
+# Calculate each participant's overall BMRQ score by summing
+# the six BMRQ subscale scores.
+
+df_100s_b <- df_100s_b %>%
+  mutate(
+    total_bmrq = `1_reward` + `2_seeking` + `3_emotion` +
+      `4_mood` + `5_sensemotor` + `6_absorption`
+  )
+
+df_200s_b <- df_200s_b %>%
+  mutate(
+    total_bmrq = `1_reward` + `2_seeking` + `3_emotion` +
+      `4_mood` + `5_sensemotor` + `6_absorption`
+  )
+
+#---------------------------------------------------------
+# QUESTIONNAIRE #
+#----------------------------------------------------------
+
+#--------------------------------------------------
+# Clean questionnaire data
+#--------------------------------------------------
+# Remove free-text variables that will not be included in the
+# statistical analyses. These remain available in the raw files.
+
+df_100s_q <- df_100s_q %>%
+  select(
+    -Comment_mid,
+    -`Comment _ortho`,
+    -Langues,
+    -Comment
+  )
+
+df_200s_q <- df_200s_q %>%
+  select(
+    -Comment_mid,
+    -Comment_ortho,
+    -Langues,
+    -Comment
+  )
+
+#--------------------------------------------------
+# Replace missing questionnaire responses
+#--------------------------------------------------
+# Replace missing questionnaire responses with 0, indicating the
+# absence of the characteristic or activity.
+
+response_vars <- c(
+  "Move_priming",
+  "Move_popbat",
+  "Musique",
+  "Instrument",
+  "Danse",
+  "Ecoute_musique",
+  "Chant",
+  "Orthophoniste",
+  "Bilinguisme"
+)
+
+df_100s_q <- df_100s_q %>%
+  mutate(
+    across(
+      all_of(response_vars),
+      ~ tidyr::replace_na(., 0)
+    )
+  )
+
+df_200s_q <- df_200s_q %>%
+  mutate(
+    across(
+      all_of(response_vars),
+      ~ tidyr::replace_na(., 0)
+    )
+  )
+
+#--------------------------------------------------
+# Calculate participant age
+#--------------------------------------------------
+
+# fix one participants incorrect birthday
+df_200s_q <- df_200s_q %>%
+  mutate(
+    DOB = if_else(
+      ID == "215",
+      "12.10.2017",
+      DOB
+    )
+  )
+
+#--------------
+# Calculate each participant's age at the time of testing
+# in decimal years.
+
+library(lubridate)
+
+# 100s
+df_100s_q <- df_100s_q %>%
+  mutate(
+    DOB = dmy(DOB),
+    DOT = dmy(DOT),
+    age = round(time_length(interval(DOB, DOT), "years"), 2)
+  )
+
+# 200s
+df_200s_q <- df_200s_q %>%
+  mutate(
+    DOB = dmy(DOB),
+    DOT = dmy(DOT),
+    age = round(time_length(interval(DOB, DOT), "years"), 2)
+  )
+
+#change the order of where age goes
+df_100s_q <- df_100s_q %>%
+  relocate(age, .after = Sex)
+
+df_200s_q <- df_200s_q %>%
+  relocate(age, .after = Sex)
+
+#--------------------------------------------------
+# Rename questionnaire variables
+#--------------------------------------------------
+
+# Rename questionnaire variables to English while retaining
+# the original meaning of each question.
+
+df_100s_q <- df_100s_q %>%
+  rename(
+    sex = Sex,
+    move_priming= Move_priming,
+    move_popbat= Move_popbat,
+    music_training = Musique,
+    instrument_training = Instrument,
+    dance_training = Danse,
+    music_listening = Ecoute_musique,
+    singing = Chant,
+    speech_therapy = Orthophoniste,
+    bilingual = Bilinguisme
+  )
+
+df_200s_q <- df_200s_q %>%
+  rename(
+    sex = Sex,
+    move_priming= Move_priming,
+    move_popbat= Move_popbat,
+    music_training = Musique,
+    instrument_training = Instrument,
+    dance_training = Danse,
+    music_listening = Ecoute_musique,
+    singing = Chant,
+    speech_therapy = Orthophoniste,
+    bilingual = Bilinguisme
+  )
+
+#--------------------------------------------------
+# Merge BMRQ and questionnaire data
+#--------------------------------------------------
+
+# Merge the cleaned BMRQ and questionnaire datasets using
+# participant ID.
+
+df_100s_bq <- left_join(
+  df_100s_q,
+  df_100s_b,
+  by = "ID"
+)
+
+df_200s_bq <- left_join(
+  df_200s_q,
+  df_200s_b,
+  by = "ID"
+)
+
+df_100s_bq <- df_100s_bq %>%
+  mutate(group = "attentive")
+
+df_200s_bq <- df_200s_bq %>%
+  mutate(group = "distracted")
+
+# #--------------------------------------------------
+# Combine Study 1 questionnaire and BMRQ data
+#--------------------------------------------------
+
+# Combine the attentive (100s) and distracted (200s) participant
+# data into a single Study 1 questionnaire and BMRQ dataset.
+
+study1_qb <- bind_rows(
+  df_100s_bq,
+  df_200s_bq
+)
+
+study1_qb <- study1_qb %>%
+  relocate(group, .after = DOT)
+
+#-------------------------------------------------------------
+
+#save it 
+write.csv(
+  study1_qb,
+  "/Users/music/Desktop/code/bmrq/data_out/study1_ques_bmrq.csv",
+  row.names = FALSE
+)
