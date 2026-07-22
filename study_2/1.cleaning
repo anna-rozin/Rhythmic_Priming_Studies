@@ -1,0 +1,318 @@
+# STUDY 2 
+# Cleaning  
+# July 20 2026
+#
+# Author:   Anya Rozin
+# Purpose:  Cleaning CSV's for rhythmic priming experiment 
+# data is from open sesame
+# Note: 
+
+# clean environment
+rm(list = ls())
+
+library(dplyr)
+
+# load the directory 
+CSV_directory_ <- "/Users/music/Desktop/code/priming/data_in/study2"
+
+# This is for Study 2 
+# ------------------------------
+
+# Create a list containing the full path of every CSV file
+# found in the specified Study 1 data directory.
+
+files_ <- list.files(
+  CSV_directory_,
+  pattern = "\\.csv$",
+  full.names = TRUE
+)
+
+# Create an empty list in which each cleaned participant
+# dataset will be stored before they are combined.
+all_data_ <- list()
+
+# Check the number of CSV files found in the directory.
+length(files_)
+
+
+#--------------------------------------------------
+# Import and prepare each participant file
+#--------------------------------------------------
+
+# Loop through the CSV files one at a time. Each file is imported,
+# checked for the required variables, reformatted, and stored in
+# the all_data_ list.
+
+for (i in seq_along(files_)) {
+  
+  file_path <- files_[i]
+  
+#------------------------------------------------
+  # Import the CSV file
+ #------------------------------------------------
+  # First attempt to read the file using a comma delimiter.
+  df <- read.csv(
+    file_path,
+    stringsAsFactors = FALSE,
+    header = TRUE,
+    sep = ","
+  )
+  
+  # Some participant files may use a semicolon delimiter.
+  # If the first import produces only one column, try importing
+  # the file again using a semicolon.
+  if (ncol(df) == 1) {
+    df <- read.csv(
+      file_path,
+      stringsAsFactors = FALSE,
+      header = TRUE,
+      sep = ";"
+    )
+  }
+  
+  # If the file still contains only one column, try importing it
+  # using a tab delimiter.
+  if (ncol(df) == 1) {
+    df <- read.csv(
+      file_path,
+      stringsAsFactors = FALSE,
+      header = TRUE,
+      sep = "\t"
+    )
+  }
+  
+  #------------------------------------------------
+  # Check that all required variables are present
+  #------------------------------------------------
+  # Define the variables required for the cleaning and analysis
+  # pipeline. Files missing any of these columns are skipped and
+  # identified with a warning.
+  
+  
+  required_cols_ <- c(
+    "bloc_nr",
+    "datetime",
+    "list_type",
+    "prime_name",
+    "prime_type",
+    "response_correct",
+    "response_keyboard_sentence",
+    "response_time_keyboard_sentence",
+    "sentence_name",
+    "sentence_type",
+    "subject_nr",
+    "title",
+    "total_responses"
+  )
+  
+  if (!all(required_cols_ %in% colnames(df))) {
+    warning("Skipping file (missing columns): ", basename(file_path))
+    next
+  }
+  
+  #------------------------------------------------
+  # Rename variables
+  #------------------------------------------------
+  
+  # Rename the original task-output variables using shorter and
+  # more interpretable names that will be used throughout the
+  # cleaning and analysis scripts.
+  
+  df <- df %>%
+    rename(
+      block = bloc_nr,
+      item = sentence_name,
+      ID = subject_nr,
+      response_order = total_responses,
+      date = datetime,
+      response_type = response_keyboard_sentence,
+      response_time = response_time_keyboard_sentence
+    )
+  
+  #------------------------------------------------
+  # Order trials and calculate within-block order
+  #------------------------------------------------
+  
+  # Arrange trials chronologically within each participant and block
+  # using the cumulative response number recorded by the experiment.
+  df <- df %>%
+    arrange(ID, block, response_order)
+  
+  # Create a trial-order variable that begins at 1 within each block.
+  # This represents the position of each sentence within its block.
+  df <- df %>%
+    group_by(ID, block) %>%
+    mutate(
+      block_order = row_number()
+    ) %>%
+    ungroup()
+  
+  #------------------------------------------------
+  # Set variable types
+  #------------------------------------------------
+  # Convert categorical variables to factors and variables representing
+  # counts, order, or accuracy to numeric format
+  
+  df <- df %>%
+    mutate(
+      ID = factor(ID),
+      list_type = factor(list_type),
+      prime_type = factor(prime_type),
+      sentence_type = factor(sentence_type),
+      
+      block = as.numeric(block),
+      block_order = as.numeric(block_order),
+      response_order = as.numeric(response_order),
+      response_correct = as.numeric(response_correct)
+    )
+  
+  #------------------------------------------------
+  # Reorder variables
+  #------------------------------------------------
+  
+  # Arrange the columns in a logical order, beginning with participant
+  # and experimental-design information, followed by trial information
+  # and behavioural responses.
+  
+  df <- df %>%
+    relocate(
+      ID,
+      date,
+      title,
+      list_type,
+      block,
+      block_order,
+      response_order,
+      prime_type,
+      prime_name,
+      sentence_type,
+      item,
+      response_type,
+      response_time,
+      response_correct
+    )
+  
+  #------------------------------------------------
+  # Convert the testing date
+  #------------------------------------------------
+  # Extract the calendar date from the original date-time string.
+  # The testing time is not needed
+  
+  df <- df %>%
+    mutate(
+      date = as.Date(
+        date,
+        format = "%a %b %d %H:%M:%S %Y"
+      )
+    )
+  # Store the cleaned participant dataset in the list.
+  all_data_[[i]] <- df
+  
+}
+
+#--------------------------------------------------
+# Combine all participant files
+#--------------------------------------------------
+# Merge the cleaned participant datasets into one trial-level dataset.
+
+data_ <- bind_rows(all_data_)
+
+#--------------------------------------------------
+# Standardize participant IDs
+#--------------------------------------------------
+# Format participant IDs using two digits so that, for example,
+# participant 1 is represented as "01".
+# IDs are stored as character strings so that leading zeros are retained.
+
+data_ <- data_ %>%
+  mutate(
+    ID = sprintf("%02d", as.integer(as.character(ID)))
+  )
+
+
+#--------------------------------------------------
+# Check for completely empty rows
+#--------------------------------------------------
+# Identify rows in which every variable is either missing or blank.
+# The expected number of completely empty rows is zero.
+
+empty_rows <- data_ %>%
+  filter(if_all(everything(), ~ is.na(.) | . == ""))
+
+nrow(empty_rows)
+
+
+#--------------------------------------------------
+# Recalculate response correctness
+#--------------------------------------------------
+# OpenSesame treated uppercase responses ("L"/"S") as incorrect,
+# even though they represent the same keypresses as the lowercase
+# responses ("l"/"s"). Standardize the response keys and recalculate
+# response correctness from the sentence type and participant response.
+
+data_ <- data_ %>%
+  mutate(
+    # Convert all response keys to lowercase
+    response_type = tolower(response_type),
+    
+    # Recalculate response correctness
+    response_correct_new = case_when(
+      sentence_type == "gram"   & response_type == "l" ~ 1,
+      sentence_type == "ungram" & response_type == "s" ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+#--------------------------------------------------
+# Check recalculated response correctness
+#--------------------------------------------------
+# Compare the original and recalculated correctness values.
+# Any differences should reflect the correction of uppercase
+# response keys ("L"/"S") that were previously scored as incorrect.
+
+table(
+  Original = data_$response_correct,
+  Recalculated = data_$response_correct_new
+)
+
+# Display trials whose correctness changed after recalculation.
+
+data_ %>%
+  filter(response_correct != response_correct_new) %>%
+  select(
+    ID,
+    sentence_type,
+    response_type,
+    response_correct,
+    response_correct_new
+  )
+
+#---------------------------------------------------------------
+# Replace the original response_correct variable with the corrected version.
+data_ <- data_ %>%
+  select(-response_correct) %>%
+  rename(response_correct = response_correct_new)
+
+#--------------------------------------------------
+# Standardize prime labels
+#--------------------------------------------------
+# Rename the prime conditions using shorter labels that will be used
+# consistently throughout the analysis
+
+data_ <- data_ %>%
+  mutate(
+    prime_type = recode(
+      prime_type,
+      "PopPrime" = "Reg",
+      "Texture" = "Irreg"
+    )
+  )
+
+#-----------------------------------------------------------------#
+
+#save it 
+write.csv(
+  data_,
+  "/Users/music/Desktop/code/priming/data_out/study2/data_clean.csv",
+  row.names = FALSE
+)
