@@ -1,0 +1,221 @@
+# Date: 27 July
+# Author:   Anya Rozin
+# Purpose:  # popBAT hits and false alarms
+# Note:     # to calculate with my own code 
+# step 1
+
+# clean environment
+rm(list = ls())
+
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(purrr)
+
+#-----------------------------------------------------
+#STUDY 1_ 100s
+
+# 1. Folder path
+input_directory <- "/Users/music/Desktop/code/popbat/data_in/study1/100s"
+
+# Get all CSV files
+file_list1 <- list.files(
+  path = input_directory,
+  pattern = "\\.csv$",
+  full.names = TRUE
+)
+
+# Read and combine all files
+df_100 <- file_list1 %>%
+  map(~ read_csv(.x, col_types = cols(.default = col_character()))) %>%
+  bind_rows()
+
+#which letters from keyboard are used? 
+unique(df_100$response_perception)
+
+#-----------------------------------------------------
+# STUDY 2_ 200s
+
+# 1. Folder path
+input_directory <- "/Users/music/Desktop/code/popbat/data_in/study1/200s"
+
+# Get all CSV files
+file_list2 <- list.files(
+  path = input_directory,
+  pattern = "\\.csv$",
+  full.names = TRUE
+)
+
+# Read and combine all files
+df_200 <- file_list2 %>%
+  map(~ read_csv(.x, col_types = cols(.default = col_character()))) %>%
+  bind_rows()
+
+#which letters from keyboard are used? 
+unique(df_200$response_perception)
+
+
+##-----------------------------------------------------
+# STUDY 2 205
+
+df_205 <- read_delim(
+  "/Users/music/Desktop/code/popbat/data_in/study1/205/subject-205_popBAT.csv",
+  delim = ";",
+  col_types = cols(.default = col_character())
+)
+
+# Add 205 to the 200 dataset
+df_200 <- bind_rows(df_200, df_205)
+
+#---------------------------------------!
+# STUDY 2 PATH and merge files
+
+# 1. Folder path
+input_directory <- "/Users/music/Desktop/code/popbat/data_in/study2"
+
+# Get all CSV files
+file_list <- list.files(
+  path = input_directory,
+  pattern = "\\.csv$",
+  full.names = TRUE
+)
+
+# Read and combine all files
+df_s2 <- file_list %>%
+  map(~ read_csv(.x, col_types = cols(.default = col_character()))) %>%
+  bind_rows()
+
+#---------------------------------------!-------
+#what letters does everyone use
+
+# What response keys does each dataset use?
+
+unique(df_100$response_perception)
+
+unique(df_200$response_perception)
+
+unique(df_s2$response_perception)
+
+#---------------------------------------!-------
+# make all letters lowercase
+
+library(dplyr)
+
+df_100 <- df_100 %>%
+  mutate(response_perception = tolower(response_perception))
+
+df_200 <- df_200 %>%
+  mutate(response_perception = tolower(response_perception))
+
+df_s2 <- df_s2 %>%
+  mutate(response_perception = tolower(response_perception))
+
+
+#---------------------------------------!-------
+# calculate  for 100s 
+
+df_100_scored <- df_100 %>%
+  mutate(
+    HIT = if_else(
+      trial_type == "OFF" & response_perception %in% c("s", "d"),
+      1,
+      0
+    ),
+    
+    FA = if_else(
+      trial_type == "ON" & response_perception %in% c("s", "d"),
+      1,
+      0
+    )
+  )
+
+df_100_summary <- df_100_scored %>%
+  group_by(subject_nr) %>%
+  summarise(
+    hits = sum(HIT),
+    false_alarms = sum(FA),
+    hit_rate = hits / 10,
+    fa_rate = false_alarms / 10,
+    hit_minus_fa = hit_rate - fa_rate,
+    .groups = "drop"
+  )
+
+#---------------------------------------!-------
+# calculate  for 200s
+
+df_200_scored <- df_200 %>%
+  mutate(
+    HIT = if_else(
+      trial_type == "OFF" &
+        response_perception %in% c("s", "d", "q"),
+      1,
+      0
+    ),
+    
+    FA = if_else(
+      trial_type == "ON" &
+        response_perception %in% c("s", "d", "q"),
+      1,
+      0
+    )
+  )
+
+df_200_summary <- df_200_scored %>%
+  group_by(subject_nr) %>%
+  summarise(
+    hits = sum(HIT),
+    false_alarms = sum(FA),
+    hit_rate = hits / 10,
+    fa_rate = false_alarms / 10,
+    hit_minus_fa = hit_rate - fa_rate,
+    .groups = "drop"
+  )
+
+#---------------------------------------!-------
+# calculate  for study 2
+
+
+df_s2_scored <- df_s2 %>%
+  mutate(
+    HIT = if_else(
+      trial_type == "OFF" & response_perception == "s",
+      1,
+      0
+    ),
+    
+    FA = if_else(
+      trial_type == "ON" & response_perception == "s",
+      1,
+      0
+    )
+  )
+
+df_s2_summary <- df_s2_scored %>%
+  group_by(subject_nr) %>%
+  summarise(
+    hits = sum(HIT),
+    false_alarms = sum(FA),
+    hit_rate = hits / 10,
+    fa_rate = false_alarms / 10,
+    hit_minus_fa = hit_rate - fa_rate,
+    .groups = "drop"
+  )
+
+
+#-----------------------------------------------
+output_directory <- "/Users/music/Desktop/code/popbat/data_out/R"
+
+readr::write_csv(
+  df_100_summary,
+  file.path(output_directory, "study1_100_summary.csv")
+)
+
+readr::write_csv(
+  df_200_summary,
+  file.path(output_directory, "study1_200_summary.csv")
+)
+
+readr::write_csv(
+  df_s2_summary,
+  file.path(output_directory, "study2_summary.csv")
+)
