@@ -1,0 +1,142 @@
+# ============================================================
+# STEP 1: Load, inspect, and combine raw data
+# Grammaticality Judgment (GrJ) priming task
+# Groups: 100 = attentive, 200 = distracted
+#
+# Run this from inside the "analyses" RStudio project so that
+# all paths below are relative to the project root.
+# ============================================================
+rm(list = ls())
+library(tidyverse)   # dplyr, readr, ggplot2, etc.
+library(readxl)      # for the .xlsx individual-differences files
+
+# Make sure the output folder exists before we try to save into it
+dir.create("data_processed/study1", recursive = TRUE, showWarnings = FALSE)
+
+# ---- 1. Load raw trial-level data ---------------------------
+data_100 <- read_csv("data_raw/study1/data_100.csv")   # attentive group, 35 participants
+data_200 <- read_csv("data_raw/study1/data_200.csv")   # distracted group, 34 participants
+
+# ---- 2. Quick structural check before combining --------------
+# Confirms both dataframes have identical column names/types
+# before we bind them - important since a mismatch here would
+# silently create NA columns after bind_rows()
+stopifnot(identical(sort(names(data_100)), sort(names(data_200))))
+
+glimpse(data_100)
+glimpse(data_200)
+
+# ---- 3. Tag each group and combine ---------------------------
+data_100 <- data_100 %>% mutate(attention = "attentive")
+data_200 <- data_200 %>% mutate(attention = "distracted")
+
+trial_data <- bind_rows(data_100, data_200) %>%
+  mutate(
+    ID              = factor(ID),
+    attention       = factor(attention, levels = c("attentive", "distracted")),
+    list_type       = factor(list_type),
+    prime_type      = factor(prime_type, levels = c("reg", "irreg")),
+    sentence_type   = factor(sentence_type, levels = c("gram", "ungram")),
+    response_type   = factor(response_type),
+    item            = factor(item),
+    response_correct = as.integer(response_correct)
+  )
+
+# ---- 4. Sanity checks on the combined data --------------------
+# Row count should equal nrow(data_100) + nrow(data_200)
+nrow(trial_data) == nrow(data_100) + nrow(data_200)
+
+# No participant ID should appear in both groups
+intersect(unique(data_100$ID), unique(data_200$ID))   # should be empty
+
+# Participant count per group (should be 35 and 34)
+trial_data %>% count(attention, ID) %>% count(attention)
+
+# Design check: how many trials per participant per condition?
+# (helps catch missing/unbalanced cells before modeling)
+trial_data %>%
+  count(attention, prime_type, sentence_type) %>%
+  arrange(attention, prime_type, sentence_type)
+
+# ---- 5. Load the SDT (participant-level) summary data ---------
+sdt_data <- read_csv("data_raw/study1/data_SDT_study1.csv") %>%
+  mutate(ID = factor(ID))
+
+# Add the attention grouping to the SDT data too, based on ID range
+sdt_data <- sdt_data %>%
+  mutate(
+    attention = if_else(as.integer(as.character(ID)) < 200,
+                        "attentive", "distracted"),
+    attention = factor(attention, levels = c("attentive", "distracted"))
+  )
+
+sdt_data %>% count(attention)   # should be 35 / 34
+
+# ---- 6. Load individual-differences measures -------------------
+# popBAT: "Subject" is a within-file counter, NOT the study ID.
+# Confirmed mapping: Subject N in the _100 file = ID (100 + N);
+# Subject N in the _200 file = ID (200 + N).
+popbat_100 <- read_excel("data_raw/study1/popBAT_results_100.xlsx") %>%
+  mutate(ID = Subject + 100) %>%
+  select(ID, popbat_hitfa = `HIT-FA_rate`)
+
+popbat_200 <- read_excel("data_raw/study1/popBAT_results_200.xlsx") %>%
+  mutate(ID = Subject + 200) %>%
+  select(ID, popbat_hitfa = `HIT-FA_rate`)
+
+popbat <- bind_rows(popbat_100, popbat_200)
+# NOTE: popBAT_results_100.xlsx is missing Subject 31 (-> ID 131 = NA)
+# popBAT_results_200.xlsx includes Subject 35 (-> ID 235), which has
+# no matching participant in the trial data and will not be used.
+
+# BMRQ questionnaire - also has chronological age (`age`) and sex
+bmrq <- read_csv("data_raw/study1/study1_ques_bmrq.csv") %>%
+  select(ID, sex, chronological_age = age, total_bmrq, move_priming, move_popbat,
+         music_training, instrument_training, dance_training, music_listening,
+         singing, speech_therapy, bilingual)
+
+# Le Chat (reading fluency) - subscores + total
+lechat <- read_excel("data_raw/study1/lechat_s1.xlsx") %>%
+  select(
+    ID = ID,
+    lechat_expression = expression,
+    lechat_phrase      = phrase,
+    lechat_decodage    = decodage,
+    lechat_vitesse     = vitesse,
+    lechat_total       = total
+  )
+
+# Alouette (reading age) - two raters (j, l); using rater "l" for now
+alouette <- read_excel("data_raw/study1/study1_alouette.xlsx") %>%
+  filter(!is.na(ID)) %>%
+  select(ID, reading_age_months = reading_age_months_l) %>%
+  mutate(reading_age_months = as.numeric(reading_age_months))
+
+# ---- 7. Combine all individual-differences measures into one table ----
+indiv_diff <- bmrq %>%
+  full_join(popbat,   by = "ID") %>%
+  full_join(lechat,   by = "ID") %>%
+  full_join(alouette, by = "ID") %>%
+  mutate(ID = factor(ID))
+
+# Check how much missingness we're carrying into the models
+indiv_diff %>%
+  summarise(across(everything(), ~ sum(is.na(.))))
+
+# ---- 8. Merge individual differences onto trial-level and SDT data ----
+trial_data <- trial_data %>%
+  left_join(indiv_diff, by = "ID")
+
+sdt_data <- sdt_data %>%
+  left_join(indiv_diff, by = "ID")
+
+# Confirm the merge didn't duplicate any trial rows
+nrow(trial_data) == nrow(data_100) + nrow(data_200)
+
+# ---- 9. Save combined data for the next script -----------------
+saveRDS(trial_data, "data_processed/study1/trial_data_combined.rds")
+saveRDS(sdt_data,   "data_processed/study1/sdt_data_combined.rds")
+
+# ---- 9. Save combined data for the next script -----------------
+write_csv(trial_data, "data_processed/study1/trial_data_combined.csv")
+write_csv(sdt_data,   "data_processed/study1/sdt_data_combined.csv")
