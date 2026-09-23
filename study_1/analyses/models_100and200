@@ -1,0 +1,103 @@
+# ============================================================
+# Baseline + single-covariate models (bracket formula)
+# Core structure, every model: prime * sentence * (attention + covariate)
+# Brackets keep every model capped at 3-way interactions, and mean
+# each covariate is tested for interactions with prime/sentence too,
+#
+# Full N = 69 
+# ============================================================
+
+library(tidyverse)
+library(lme4)
+library(broom.mixed)
+library(performance)
+
+trial_data <- readRDS("data_processed/study1/trial_data_model_ready.rds")
+
+re_structure <- "(1 | ID) + (0 + prime_type_c | ID) + (0 + sentence_type_c | ID) + (1 | item)"
+
+fit_glmm <- function(fixed_formula) {
+  form <- as.formula(paste("response_correct ~", fixed_formula, "+", re_structure))
+  glmer(form, data = trial_data, family = binomial,
+        control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+}
+
+# ============================================================
+# PART A: Basic model - prime x sentence x (attention)
+# With only attention in the brackets this reduces to the same
+# 3-way formula as before, but going through the full maximal ->
+# simplify sequence again as a check, since it's the foundation
+# everything else builds from.
+# ============================================================
+
+# ---- A1. Maximal random-effects structure ------------------------
+model_basic_maximal <- glmer(
+  response_correct ~ prime_type_c * sentence_type_c * (attention_c) +
+    (1 + prime_type_c * sentence_type_c | ID) + (1 | item),
+  data = trial_data,
+  family = binomial,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+check_singularity(model_basic_maximal)
+
+# ---- A2. If singular: drop correlations ---------------------------
+model_basic_nocorr <- glmer(
+  response_correct ~ prime_type_c * sentence_type_c * (attention_c) +
+    (1 + prime_type_c * sentence_type_c || ID) + (1 | item),
+  data = trial_data,
+  family = binomial,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+check_singularity(model_basic_nocorr)
+
+# ---- A3. If still singular: drop the interaction slope -------------
+model_basic_final <- fit_glmm("prime_type_c * sentence_type_c * (attention_c)")
+summary(model_basic_final)
+check_singularity(model_basic_final)
+
+saveRDS(model_basic_final, "data_processed/study1/model_basic_bracket.rds")
+
+
+# ============================================================
+# PART B: Single-covariate models - prime x sentence x (attention + covariate)
+# One at a time. Reuses the validated random-effects structure
+# from Part A directly (no need to re-run the maximal->simplify
+# ladder for each one), but still checks singularity as a safeguard.
+# ============================================================
+
+model_reading_age <- fit_glmm("prime_type_c * sentence_type_c * (attention_c + reading_age_months_z)")
+check_singularity(model_reading_age)
+
+model_lechat <- fit_glmm("prime_type_c * sentence_type_c * (attention_c + lechat_total_z)")
+check_singularity(model_lechat)
+
+model_popbat <- fit_glmm("prime_type_c * sentence_type_c * (attention_c + popbat_hitfa_z)")
+check_singularity(model_popbat)
+
+model_bmrq <- fit_glmm("prime_type_c * sentence_type_c * (attention_c + total_bmrq_z)")
+check_singularity(model_bmrq)
+
+model_chronological_age <- fit_glmm("prime_type_c * sentence_type_c * (attention_c + chronological_age_z)")
+check_singularity(model_chronological_age)
+
+# ---- B1. Check all five for singularity/N at a glance ----------------------
+covariate_models_list <- list(
+  reading_age        = model_reading_age,
+  lechat             = model_lechat,
+  popbat             = model_popbat,
+  bmrq               = model_bmrq,
+  chronological_age  = model_chronological_age
+)
+
+map_dfr(covariate_models_list, ~ tibble(
+  n_obs    = nobs(.x),
+  singular = isSingular(.x)
+), .id = "model") %>% print(n = Inf)
+
+# ---- B2. Tidy fixed-effects tables for each ---------------------------------
+map_dfr(covariate_models_list, ~ tidy(.x, effects = "fixed", conf.int = TRUE), .id = "model") %>%
+  filter(term != "(Intercept)") %>%
+  print(n = Inf)
+
+# ---- B3. Save all five -------------------------------------------------------
+saveRDS(covariate_models_list, "data_processed/study1/bracket_covariate_models.rds")
