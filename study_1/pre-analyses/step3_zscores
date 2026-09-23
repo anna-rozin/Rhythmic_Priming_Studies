@@ -1,0 +1,69 @@
+# ============================================================
+# STEP 3: Prepare trial_data for GLMMs
+# - z-score continuous individual-differences covariates
+# - effects-code (-0.5/+0.5) categorical predictors so main
+#   effects are interpretable in the presence of interactions
+# ============================================================
+
+library(tidyverse)
+
+trial_data <- readRDS("data_processed/study1/trial_data_combined.rds")
+
+# ---- 1. Z-score continuous covariates ---------------------------
+# scale() z-scores (mean 0, SD 1). Using across() so every covariate
+# gets the same treatment in one pass, added as new _z columns
+# (keeping the raw versions too, in case you want raw values for
+# descriptives/plots later).
+continuous_covariates <- c(
+  "chronological_age", "total_bmrq", "popbat_hitfa",
+  "lechat_expression", "lechat_phrase", "lechat_decodage",
+  "lechat_vitesse", "lechat_total", "reading_age_months"
+)
+
+trial_data <- trial_data %>%
+  mutate(across(
+    all_of(continuous_covariates),
+    ~ as.numeric(scale(.)),
+    .names = "{.col}_z"
+  ))
+
+# Quick check: each _z column should have mean ~0, sd ~1
+trial_data %>%
+  summarise(across(ends_with("_z"), list(mean = ~mean(., na.rm = TRUE),
+                                         sd   = ~sd(., na.rm = TRUE)))) %>%
+  pivot_longer(everything()) %>%
+  print(n = Inf)
+
+# ---- 2. Effects-code categorical predictors ----------------------
+# Default R treatment coding (0/1) makes "main effects" in a model
+# with interactions actually mean "effect at the reference level
+# only" - effects coding (-0.5/+0.5) gives true main effects instead.
+# Factor levels/labels are kept as-is for readability in plots/tables;
+# these _c columns are what go INTO the model formulas.
+trial_data <- trial_data %>%
+  mutate(
+    prime_type_c    = if_else(prime_type == "reg", -0.5, 0.5),      # reg = -0.5, irreg = +0.5
+    sentence_type_c = if_else(sentence_type == "gram", -0.5, 0.5),  # gram = -0.5, ungram = +0.5
+    attention_c     = if_else(attention == "attentive", -0.5, 0.5)  # attentive = -0.5, distracted = +0.5
+  )
+
+
+
+# ---- 2b. Derive block-position and experiment-position predictors ----
+# block_half: position within each 6-trial block (trials 1-3 vs 4-6)
+# experiment_half: position within the whole 8-block session (blocks 1-4 vs 5-8)
+# Both effects-coded the same way as the other categorical predictors.
+trial_data <- trial_data %>%
+  mutate(
+    block_half        = if_else(block_order <= 3, "first_half", "second_half"),
+    block_half_c       = if_else(block_half == "first_half", -0.5, 0.5),
+    experiment_half    = if_else(block <= 4, "first_half", "second_half"),
+    experiment_half_c  = if_else(experiment_half == "first_half", -0.5, 0.5)
+  )
+
+# Sanity check: should be a clean, balanced split
+trial_data %>% count(block_half)
+trial_data %>% count(experiment_half)
+
+# ---- 3. Save model-ready data -------------------------------------
+saveRDS(trial_data, "data_processed/study1/trial_data_model_ready.rds")
