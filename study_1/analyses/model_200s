@@ -1,0 +1,110 @@
+# ============================================================
+# Models for 200 only (distracted group)
+# Same logic as script 10 (100-only): no attention term, no
+# brackets needed for the covariate models since prime x sentence
+# x covariate is already at the 3-way cap.
+# ============================================================
+
+library(tidyverse)
+library(lme4)
+library(broom.mixed)
+library(performance)
+
+trial_data <- readRDS("data_processed/study1/trial_data_model_ready.rds")
+
+data_200 <- trial_data %>% filter(attention == "distracted")
+nrow(data_200); n_distinct(data_200$ID)   # sanity check - should be ~1,632 / 34
+
+
+# ============================================================
+# PART A: Basic model - prime x sentence (200 only)
+# ============================================================
+
+# ---- A1. Maximal random-effects structure --------------------------
+model_200_basic_maximal <- glmer(
+  response_correct ~ prime_type_c * sentence_type_c +
+    (1 + prime_type_c * sentence_type_c | ID) + (1 | item),
+  data = data_200,
+  family = binomial,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+summary(model_200_basic_maximal)
+check_singularity(model_200_basic_maximal)
+
+# ---- A2. If singular: drop correlations -----------------------------
+model_200_basic_nocorr <- glmer(
+  response_correct ~ prime_type_c * sentence_type_c +
+    (1 + prime_type_c * sentence_type_c || ID) + (1 | item),
+  data = data_200,
+  family = binomial,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+summary(model_200_basic_nocorr)
+check_singularity(model_200_basic_nocorr)
+
+# ---- A3. If still singular: drop the interaction slope ---------------
+model_200_basic_final <- glmer(
+  response_correct ~ prime_type_c * sentence_type_c +
+    (1 | ID) + (0 + prime_type_c | ID) + (0 + sentence_type_c | ID) + (1 | item),
+  data = data_200,
+  family = binomial,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+summary(model_200_basic_final)
+check_singularity(model_200_basic_final)
+
+# ---- A4. Save whichever converged cleanly -----------------------------
+saveRDS(model_200_basic_final, "data_processed/study1/model_200_basic.rds")
+tidy(model_200_basic_final, effects = "fixed", conf.int = TRUE)
+
+
+# ============================================================
+# PART B: Single-covariate models - prime x sentence x covariate
+# Reuses the validated random-effects structure from Part A
+# directly, checking singularity as a safeguard for each.
+# ============================================================
+
+re_structure_200 <- "(1 | ID) + (0 + prime_type_c | ID) + (0 + sentence_type_c | ID) + (1 | item)"
+
+fit_glmm_200 <- function(fixed_formula) {
+  form <- as.formula(paste("response_correct ~", fixed_formula, "+", re_structure_200))
+  glmer(form, data = data_200, family = binomial,
+        control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+}
+
+model_200_reading_age <- fit_glmm_200("prime_type_c * sentence_type_c * reading_age_months_z")
+check_singularity(model_200_reading_age)
+
+model_200_lechat <- fit_glmm_200("prime_type_c * sentence_type_c * lechat_total_z")
+check_singularity(model_200_lechat)
+
+model_200_popbat <- fit_glmm_200("prime_type_c * sentence_type_c * popbat_hitfa_z")
+check_singularity(model_200_popbat)
+
+model_200_bmrq <- fit_glmm_200("prime_type_c * sentence_type_c * total_bmrq_z")
+check_singularity(model_200_bmrq)
+
+model_200_chronological_age <- fit_glmm_200("prime_type_c * sentence_type_c * chronological_age_z")
+check_singularity(model_200_chronological_age)
+
+# ---- B1. Check all five for singularity/N at a glance ------------------
+covariate_models_200 <- list(
+  reading_age        = model_200_reading_age,
+  lechat             = model_200_lechat,
+  popbat             = model_200_popbat,
+  bmrq               = model_200_bmrq,
+  chronological_age  = model_200_chronological_age
+)
+
+map_dfr(covariate_models_200, ~ tibble(
+  n_obs    = nobs(.x),
+  singular = isSingular(.x)
+), .id = "model") %>% print(n = Inf)
+
+# ---- B2. Tidy fixed-effects tables for each ------------------------------
+map_dfr(covariate_models_200, ~ tidy(.x, effects = "fixed", conf.int = TRUE), .id = "model") %>%
+  filter(term != "(Intercept)") %>%
+  print(n = Inf)
+
+# ---- B3. Save all five ----------------------------------------------------
+saveRDS(covariate_models_200, "data_processed/study1/bracket_covariate_models_200.rds")
