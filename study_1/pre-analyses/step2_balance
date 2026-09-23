@@ -1,0 +1,171 @@
+# ============================================================
+# STEP 2: Check group balance on individual-differences measures
+# Purpose: confirm attentive vs. distracted groups don't already
+# differ on reading skill, age, popBAT, or BMRQ before interpreting
+# any attention effects in the main GLMMs
+#
+# Also includes (section 7): correlation matrix across all
+# individual-differences measures.
+# ============================================================
+
+library(tidyverse)
+
+sdt_data <- readRDS("data_processed/study1/sdt_data_combined.rds")
+# one row per participant already - no need to collapse trial-level data
+
+# ---- 1. Variables to check ------------------------------------
+continuous_vars <- c(
+  "chronological_age", "total_bmrq", "popbat_hitfa",
+  "lechat_expression", "lechat_phrase", "lechat_decodage",
+  "lechat_vitesse", "lechat_total", "reading_age_months"
+)
+categorical_vars <- c("sex")
+
+# ---- 2. Descriptives per group ---------------------------------
+descriptives <- sdt_data %>%
+  group_by(attention) %>%
+  summarise(across(
+    all_of(continuous_vars),
+    list(mean = ~mean(., na.rm = TRUE), sd = ~sd(., na.rm = TRUE), n = ~sum(!is.na(.))),
+    .names = "{.col}_{.fn}"
+  ))
+
+descriptives %>% pivot_longer(-attention) %>% print(n = Inf)
+
+# ---- 3. Group comparison for each continuous variable -----------
+# Shapiro-Wilk within each group first: if BOTH groups look
+# normally distributed (p > .05), use a t-test; otherwise fall
+# back to the non-parametric Wilcoxon rank-sum test.
+check_balance <- function(var, data) {
+  form <- as.formula(paste(var, "~ attention"))
+  
+  shapiro_p <- data %>%
+    group_by(attention) %>%
+    summarise(p = tryCatch(shapiro.test(.data[[var]])$p.value,
+                           error = function(e) NA_real_),
+              .groups = "drop") %>%
+    pull(p)
+  
+  normal <- all(shapiro_p > .05, na.rm = TRUE)
+  
+  if (normal) {
+    test_result <- t.test(form, data = data)
+    tibble(
+      variable  = var,
+      test      = "t-test",
+      statistic = unname(test_result$statistic),
+      df        = unname(test_result$parameter),
+      p_value   = test_result$p.value
+    )
+  } else {
+    test_result <- wilcox.test(form, data = data)
+    tibble(
+      variable  = var,
+      test      = "Wilcoxon",
+      statistic = unname(test_result$statistic),
+      df        = NA_real_,
+      p_value   = test_result$p.value
+    )
+  }
+}
+
+balance_results <- map_dfr(continuous_vars, check_balance, data = sdt_data)
+balance_results %>% arrange(p_value) %>% print(n = Inf)
+
+# ---- 4. Categorical variable (sex) -------------------------------
+sex_table <- table(sdt_data$sex, sdt_data$attention)
+sex_table
+chisq.test(sex_table)
+
+# ---- 5. Flag -----------------------------------------------------
+# Anything with p < .05 here means the groups differ on that measure
+# BEFORE we've even looked at task performance - worth reporting as
+# a potential confound, and worth considering as a covariate even
+# in the per-group models (not just the combined one).
+balance_results %>% filter(p_value < .05)
+
+# ---- 6. Direction/magnitude for the significant result (total_bmrq) ----
+# Wilcoxon tells you THAT the groups differ, not which direction or
+# by how much - median is reported (not mean) since this variable
+# was non-normally distributed, which is why Wilcoxon was used above.
+sdt_data %>%
+  group_by(attention) %>%
+  summarise(
+    median_bmrq = median(total_bmrq, na.rm = TRUE),
+    mean_bmrq   = mean(total_bmrq, na.rm = TRUE),
+    sd_bmrq     = sd(total_bmrq, na.rm = TRUE),
+    n           = sum(!is.na(total_bmrq))
+  )
+
+
+# ---- 7. Correlation matrix across all individual-differences measures ----
+# One row per participant. Includes reading age, all 4 Le Chat subscores
+# + total, popBAT, BMRQ, chronological age, a d-prime difference score,
+# and the newly added background/training measures.
+#
+# d_prime_diff = d'_reg - d'_irreg: each participant's own regular-minus-
+# irregular sensitivity asymmetry, rather than an overall/averaged d'.
+#
+# NOTE on the binary variables (bilingual, speech_therapy, dance_training,
+# instrument_training, music_training): a correlation between a 0/1 binary
+# variable and a continuous one is a point-biserial correlation, which is
+# mathematically identical to Pearson's r - cor() handles this correctly
+# with no special treatment needed, but interpret these entries as "does
+# having X predict higher/lower Y" rather than a linear trend.
+sdt_data <- sdt_data %>%
+  mutate(d_prime_diff = d_prime_reg - d_prime_irreg)
+
+indiv_diff_vars <- c(
+  "reading_age_months", "lechat_expression", "lechat_phrase",
+  "lechat_decodage", "lechat_vitesse", "lechat_total",
+  "popbat_hitfa", "total_bmrq", "chronological_age",
+  "d_prime_diff",
+  # continuous (0-5)
+  "move_priming", "move_popbat", "music_listening", "singing",
+  # binary (0/1)
+  "bilingual", "speech_therapy", "dance_training",
+  "instrument_training", "music_training"
+)
+
+participant_level <- sdt_data %>%
+  distinct(ID, .keep_all = TRUE) %>%
+  select(all_of(indiv_diff_vars))
+
+cor_matrix <- cor(participant_level, use = "pairwise.complete.obs")
+round(cor_matrix, 2)
+
+
+# Flag any pair above |.7| for a quick visual scan (excludes the
+# diagonal, which is always 1)
+high_cors <- which(abs(cor_matrix) > .7 & abs(cor_matrix) < 1, arr.ind = TRUE)
+data.frame(
+  var1 = rownames(cor_matrix)[high_cors[, 1]],
+  var2 = colnames(cor_matrix)[high_cors[, 2]],
+  r    = cor_matrix[high_cors]
+) %>% distinct(r, .keep_all = TRUE)
+
+# ============================================================
+# Correlation heatmap - run this with cor_matrix already in
+# your environment (from the correlation code you already ran)
+# ============================================================
+
+library(ggcorrplot)   # install.packages("ggcorrplot") if needed
+
+plot_corr <- ggcorrplot(
+  cor_matrix,
+  method = "square",
+  type = "lower",        # only the lower triangle - removes redundant duplicate half
+  hc.order = TRUE,        # clusters correlated variables near each other
+  lab = TRUE,
+  lab_size = 2.2,          # smaller font so numbers fit inside cells
+  colors = c("#AED9E0", "white", "#F4B6C2"),   # blue (neg) - white (0) - pink (pos)
+  outline.color = "white",
+  tl.cex = 9,
+  tl.srt = 45
+) +
+  theme(axis.text.x = element_text(hjust = 1))
+
+plot_corr
+# IMPORTANT: open the saved PNG file itself, not the small RStudio
+# plot-pane preview - the preview is much smaller than this
+ggsave("plots/study1/correlation_matrix.png", plot_corr, width = 13, height = 11, dpi = 300)
