@@ -4,7 +4,7 @@
 # - effects-code (-0.5/+0.5) categorical predictors so main
 #   effects are interpretable in the presence of interactions
 # ============================================================
-
+rm(list = ls())
 library(tidyverse)
 
 trial_data <- readRDS("data_processed/study1/trial_data_combined.rds")
@@ -17,7 +17,9 @@ trial_data <- readRDS("data_processed/study1/trial_data_combined.rds")
 continuous_covariates <- c(
   "chronological_age", "total_bmrq", "popbat_hitfa",
   "lechat_expression", "lechat_phrase", "lechat_decodage",
-  "lechat_vitesse", "lechat_total", "reading_age_months"
+  "lechat_vitesse", "lechat_total", "reading_age_months",
+  "lechat_prosody", "lechat_accuracy",                                  # NEW: combined Le Chat groups
+  "b_reward", "b_seeking", "b_emotion", "b_mood", "b_sensemotor", "b_absorption"    # NEW: BMRQ subscales
 )
 
 trial_data <- trial_data %>%
@@ -47,7 +49,26 @@ trial_data <- trial_data %>%
     attention_c     = if_else(attention == "attentive", -0.5, 0.5)  # attentive = -0.5, distracted = +0.5
   )
 
+# ---- 2a. NEW: also set the contrasts on the factors themselves ----
+# Same -0.5/+0.5 coding, attached to the factors, so that
+# contrasts(trial_data$prime_type) etc. print -0.5 / 0.5.
+# The first level gets -0.5. Level order is set in script 01:
+# reg, gram and attentive come first.
+contrasts(trial_data$prime_type)    <- c(-0.5, 0.5)
+contrasts(trial_data$sentence_type) <- c(-0.5, 0.5)
+contrasts(trial_data$attention)     <- c(-0.5, 0.5)
 
+# Checks: level order and contrast matrices
+levels(trial_data$prime_type);    contrasts(trial_data$prime_type)
+levels(trial_data$sentence_type); contrasts(trial_data$sentence_type)
+levels(trial_data$attention);     contrasts(trial_data$attention)
+
+# The factor contrasts and the numeric _c columns must agree exactly
+stopifnot(
+  all(trial_data$prime_type_c    == ifelse(trial_data$prime_type    == "reg",       -0.5, 0.5)),
+  all(trial_data$sentence_type_c == ifelse(trial_data$sentence_type == "gram",      -0.5, 0.5)),
+  all(trial_data$attention_c     == ifelse(trial_data$attention     == "attentive", -0.5, 0.5))
+)
 
 # ---- 2b. Derive block-position and experiment-position predictors ----
 # block_half: position within each 6-trial block (trials 1-3 vs 4-6)
@@ -67,3 +88,5 @@ trial_data %>% count(experiment_half)
 
 # ---- 3. Save model-ready data -------------------------------------
 saveRDS(trial_data, "data_processed/study1/trial_data_model_ready.rds")
+
+write_csv(trial_data, "data_processed/study1/trial_data_model_ready.csv")
