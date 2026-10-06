@@ -10,17 +10,18 @@
 rm(list = ls())
 
 library(dplyr)
+library(tidyr)
 
 # participants beginning with 100 represent attentive group
 # participants beginning with 200 represent distracted group
 
-# load cleaned Study 1 data of participants with 100s 
+# load cleaned Study 1 data of participants with 100s
 data_study100 <- read.csv(
   "/Users/music/Desktop/code/priming/data_out/study1/data_100.csv",
   stringsAsFactors = FALSE
 )
 
-# load cleaned Study 1 data of participants with 200s 
+# load cleaned Study 1 data of participants with 200s
 data_study200 <- read.csv(
   "/Users/music/Desktop/code/priming/data_out/study1/data_200.csv",
   stringsAsFactors = FALSE
@@ -47,7 +48,7 @@ data_study1 <- bind_rows(
   )
 
 #--------------------------------------------------
-# ACCURACY 
+# ACCURACY
 #--------------------------------------------------
 # Calculate the proportion of correct responses for each participant,
 # separately for each prime condition and sentence type.
@@ -75,7 +76,7 @@ Accuracy <- data_study1 %>%
 # The columns are ordered to match the Excel spreadsheet.
 #
 # Decimal points are converted to commas because the Excel sheet uses
-# Accuracy_excel is intended only for validation against Excel; 
+# Accuracy_excel is intended only for validation against Excel;
 # the unrounded Accuracy table should be used
 # for all analyses.
 #------------------------------------------------------
@@ -90,7 +91,7 @@ Accuracy_excel <- Accuracy %>%
     )
   ) %>%
   select(-n) %>%
-  tidyr::pivot_wider(
+  pivot_wider(
     names_from = c(prime_type, sentence_type),
     values_from = Accuracy
   ) %>%
@@ -107,6 +108,7 @@ Accuracy_excel <- Accuracy %>%
       ~ gsub("\\.", ",", format(round(.x, 3), nsmall = 3))
     )
   )
+
 #--------------------------------------------------
 # Signal Detection Theory (SDT)
 # Count the four response categories
@@ -120,6 +122,9 @@ Accuracy_excel <- Accuracy %>%
 # - Miss: incorrectly judges an ungrammatical sentence as grammatical
 # - False alarm: incorrectly judges a grammatical sentence as ungrammatical
 # - Correct rejection: correctly identifies a grammatical sentence
+#
+# Accuracy (proportion correct across gram + ungram trials) is also
+# calculated per prime condition so it ends up in the final wide table.
 #--------------------------------------------------------------
 
 SDT <- data_study1 %>%
@@ -144,6 +149,8 @@ SDT <- data_study1 %>%
       sentence_type == "gram" &
         response_type == "l"
     ),
+    
+    Accuracy = mean(response_correct),   # NEW
     
     .groups = "drop"
   )
@@ -214,6 +221,17 @@ SDT <- SDT %>%
   )
 
 #--------------------------------------------------
+# Overall accuracy per participant (both prime conditions pooled)
+#--------------------------------------------------
+
+Accuracy_overall <- data_study1 %>%
+  group_by(ID) %>%
+  summarise(
+    Accuracy_overall = mean(response_correct),
+    .groups = "drop"
+  )
+
+#--------------------------------------------------
 # Reshape SDT measures to wide format
 #--------------------------------------------------
 # Calculate the difference between the hit rate and false alarm rate
@@ -222,6 +240,9 @@ SDT <- SDT %>%
 # Create a summary table containing all SDT measures for each participant.
 # The data are reshaped so that each participant occupies one row and
 # separate columns are created for the Reg and Irreg prime conditions.
+#
+# Accuracy is the last variable, so Accuracy_reg / Accuracy_irreg and
+# Accuracy_overall sit at the end of the table.
 #
 # Values are rounded to three decimal places for easier inspection
 # and the columns are renamed for clarity.
@@ -242,7 +263,8 @@ SDT_Wide <- SDT %>%
     Z_FA,
     H_minus_FA,
     d_prime,
-    c_responsebias
+    c_responsebias,
+    Accuracy
   ) %>%
   pivot_wider(
     names_from = prime_type,
@@ -255,19 +277,20 @@ SDT_Wide <- SDT %>%
       Z_FA,
       H_minus_FA,
       d_prime,
-      c_responsebias
+      c_responsebias,
+      Accuracy
     ),
     names_glue = "{.value}_{prime_type}"
   ) %>%
+  left_join(Accuracy_overall, by = "ID") %>%
   mutate(across(-ID, ~ round(.x, 3)))
 
 
 # -------------------------------------------------------
 # save SDT wide
 
-#save it 
 write.csv(
   SDT_Wide,
-  "/Users/music/Desktop/code/priming/data_out/study1/data_SDT_100.csv",
+  "/Users/music/Desktop/code/priming/data_out/study1/data_SDT_study1.csv",
   row.names = FALSE
 )
