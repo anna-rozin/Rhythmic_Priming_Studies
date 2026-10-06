@@ -93,17 +93,23 @@ popbat <- bind_rows(popbat_100, popbat_200)
 bmrq <- read_csv("data_raw/study1/study1_ques_bmrq.csv") %>%
   select(ID, sex, chronological_age = age, total_bmrq, move_priming, move_popbat,
          music_training, instrument_training, dance_training, music_listening,
-         singing, speech_therapy, bilingual)
+         singing, speech_therapy, bilingual,
+         b_reward = `1_reward`, b_seeking = `2_seeking`, b_emotion = `3_emotion`,
+         b_mood = `4_mood`, b_sensemotor = `5_sensemotor`, b_absorption = `6_absorption`)
 
-# Le Chat (reading fluency) - subscores + total
+# Le Chat (reading fluency) - subscores + total + two combined groups
 lechat <- read_excel("data_raw/study1/lechat_s1.xlsx") %>%
   select(
     ID = ID,
     lechat_expression = expression,
-    lechat_phrase      = phrase,
-    lechat_decodage    = decodage,
-    lechat_vitesse     = vitesse,
-    lechat_total       = total
+    lechat_phrase     = phrase,
+    lechat_decodage   = decodage,
+    lechat_vitesse    = vitesse,
+    lechat_total      = total
+  ) %>%
+  mutate(
+    lechat_prosody  = lechat_expression + lechat_phrase,    # variable 1: expression + phrase
+    lechat_accuracy = lechat_decodage   + lechat_vitesse    # variable 2: decodage + vitesse
   )
 
 # Alouette (reading age) - two raters (j, l); using rater "l" for now
