@@ -1,0 +1,80 @@
+# ============================================================
+# STUDY 2 - STEP 2: Prepare trial_data for GLMMs
+# - z-score continuous individual-differences covariates
+# - effects-code (-0.5/+0.5) categorical predictors
+# No attention_c needed here - single group, no manipulation.
+# ============================================================
+rm(list = ls())
+library(tidyverse)
+
+trial_data <- readRDS("data_processed/study2/trial_data_combined.rds")
+
+# ---- 1. Z-score continuous covariates ---------------------------
+# NOTE: the BMRQ subscale names (b_reward, ...) must match the column
+# names created in the Study 2 loader (script 01), same as Study 1.
+continuous_covariates <- c(
+  "chronological_age", "total_bmrq", "popbat_hitfa",
+  "lechat_expression", "lechat_phrase", "lechat_decodage",
+  "lechat_vitesse", "lechat_total", "reading_age_months",
+  "lechat_prosody", "lechat_accuracy",                                       # NEW: combined Le Chat groups
+  "move_priming", "move_popbat", "music_listening", "singing",
+  "b_reward", "b_seeking", "b_emotion", "b_mood", "b_sensemotor", "b_absorption"  # BMRQ subscales
+)
+
+trial_data <- trial_data %>%
+  mutate(across(
+    all_of(continuous_covariates),
+    ~ as.numeric(scale(.)),
+    .names = "{.col}_z"
+  ))
+
+# Quick check: each _z column should have mean ~0, sd ~1
+trial_data %>%
+  summarise(across(ends_with("_z"), list(mean = ~mean(., na.rm = TRUE),
+                                         sd   = ~sd(., na.rm = TRUE)))) %>%
+  pivot_longer(everything()) %>%
+  print(n = Inf)
+
+# ---- 2. Effects-code categorical predictors ----------------------
+trial_data <- trial_data %>%
+  mutate(
+    prime_type_c    = if_else(prime_type == "reg", -0.5, 0.5),      # reg = -0.5, irreg = +0.5
+    sentence_type_c = if_else(sentence_type == "gram", -0.5, 0.5)   # gram = -0.5, ungram = +0.5
+  )
+
+# ---- 2a. NEW: also set the contrasts on the factors themselves ----
+# Same -0.5/+0.5 coding, attached to the factors, so that
+# contrasts(trial_data$prime_type) etc. print -0.5 / 0.5.
+# The first level gets -0.5. Level order is set in the loader:
+# reg and gram come first.
+contrasts(trial_data$prime_type)    <- c(-0.5, 0.5)
+contrasts(trial_data$sentence_type) <- c(-0.5, 0.5)
+
+# Checks: level order and contrast matrices
+levels(trial_data$prime_type);    contrasts(trial_data$prime_type)
+levels(trial_data$sentence_type); contrasts(trial_data$sentence_type)
+
+# The factor contrasts and the numeric _c columns must agree exactly
+stopifnot(
+  all(trial_data$prime_type_c    == ifelse(trial_data$prime_type    == "reg",  -0.5, 0.5)),
+  all(trial_data$sentence_type_c == ifelse(trial_data$sentence_type == "gram", -0.5, 0.5))
+)
+
+# ---- 3. Derive block-position and experiment-position predictors --------
+# Same logic as Study 1: block_order 1-3 vs 4-6 within each block
+# (sentence order); block 1-4 vs 5-8 (experiment half)
+trial_data <- trial_data %>%
+  mutate(
+    block_half        = if_else(block_order <= 3, "first_half", "second_half"),
+    block_half_c       = if_else(block_half == "first_half", -0.5, 0.5),
+    experiment_half    = if_else(block <= 4, "first_half", "second_half"),
+    experiment_half_c  = if_else(experiment_half == "first_half", -0.5, 0.5)
+  )
+
+trial_data %>% count(block_half)
+trial_data %>% count(experiment_half)
+
+# ---- 4. Save model-ready data -------------------------------------
+saveRDS(trial_data, "data_processed/study2/trial_data_model_ready.rds")
+
+write_csv(trial_data, "data_processed/study2/trial_data_model_ready.csv")
