@@ -1,0 +1,135 @@
+# ============================================================
+# STUDY 2 - STEP 1: Load, inspect, and combine raw data
+# Same task (GrJ priming), different stimuli, SINGLE group -
+# no attention manipulation, so no group tagging needed.
+#
+# IMPORTANT: data_clean.csv stores ID as zero-padded TEXT
+# ("01", "02"...), but every other file (BMRQ, SDT, Le Chat,
+# Alouette, popBAT) stores it as a plain number (1, 2...). Left
+# as-is, joining on ID would silently produce all-NA columns for
+# every individual-differences measure - no error, just quietly
+# wrong data. Fix: convert every ID to a plain integer BEFORE any
+# joining, then factor() only after all merges are done.
+#
+# Run from inside the "analyses" RStudio project.
+# ============================================================
+rm(list = ls())
+library(tidyverse)
+library(readxl)
+
+dir.create("data_processed/study2", recursive = TRUE, showWarnings = FALSE)
+
+# ---- 1. Load raw trial-level data ---------------------------
+trial_data <- read_csv("data_raw/study2/data_clean.csv") %>%
+  mutate(
+    ID              = as.integer(ID),   # strips the zero-padding ("01" -> 1)
+    list_type       = factor(list_type),
+    # Study 2's prime_type is capitalized ("Reg"/"Irreg") - standardize
+    # to lowercase to match the convention used throughout Study 1
+    prime_type      = factor(tolower(prime_type), levels = c("reg", "irreg")),
+    sentence_type   = factor(sentence_type, levels = c("gram", "ungram")),
+    response_type   = factor(response_type),
+    item            = factor(item),
+    response_correct = as.integer(response_correct)
+  )
+
+glimpse(trial_data)
+
+# ---- 2. Sanity checks -----------------------------------------
+nrow(trial_data)              # should be 1,920 (40 participants x 48 trials)
+n_distinct(trial_data$ID)     # should be 40
+sort(unique(trial_data$ID))   # should be 1,2,4,5...41 (missing 3), NOT "01","02" text
+
+trial_data %>%
+  count(prime_type, sentence_type) %>%
+  arrange(prime_type, sentence_type)
+
+# ---- 3. Load the SDT (participant-level) summary data ----------
+# Study 2's SDT columns use _Reg/_Irreg suffix (capitalized) -
+# renaming to lowercase to match Study 1's naming convention
+sdt_data <- read_csv("data_raw/study2/data_SDT.csv") %>%
+  rename_with(~ str_replace_all(., c("_Reg$" = "_reg", "_Irreg$" = "_irreg"))) %>%
+  mutate(ID = as.integer(ID))
+
+glimpse(sdt_data)
+nrow(sdt_data)   # should be 40
+
+# ---- 4. Load individual-differences measures --------------------
+
+# popBAT - Subject numbers match ID directly (no offset needed, unlike
+# Study 1's 100/200 scheme) - confirmed: range 1-41, same as every
+# other Study 2 file, missing participant 3 same as everywhere else.
+popbat <- read_excel("data_raw/study2/popBAT_results_study2.xlsx") %>%
+  mutate(ID = as.integer(Subject)) %>%
+  select(ID, popbat_hitfa = `HIT-FA_rate`)
+
+# BMRQ questionnaire - already includes sex, age, background/training
+# variables, AND the BMRQ subscale items + total (richer than Study 1's
+# original bmrq file). chronological_age renamed from `age` to match
+# Study 1's naming convention.
+bmrq <- read_csv("data_raw/study2/study2_ques_bmrq.csv") %>%
+  mutate(ID = as.integer(ID)) %>%
+  select(
+    ID, sex, chronological_age = age,
+    move_priming, move_popbat, music_training, instrument_training,
+    dance_training, music_listening, singing, speech_therapy, bilingual,
+    b_reward = `1_reward`, b_seeking = `2_seeking`, b_emotion = `3_emotion`,
+    b_mood = `4_mood`, b_sensemotor = `5_sensemotor`, b_absorption = `6_absorption`,
+    total_bmrq
+  )
+
+# Le Chat (reading fluency) - same structure as Study 1's file
+lechat <- read_excel("data_raw/study2/lechat_s2.xlsx") %>%
+  mutate(ID = as.integer(ID)) %>%
+  select(
+    ID,
+    lechat_expression = expression,
+    lechat_phrase      = phrase,
+    lechat_decodage    = decodage,
+    lechat_vitesse     = vitesse,
+    lechat_total       = total     # no trailing space in your local file (matches Study 1's fix)
+  ) %>%
+  mutate(
+    lechat_prosody  = lechat_expression + lechat_phrase,    # variable 1: expression + phrase
+    lechat_accuracy = lechat_decodage   + lechat_vitesse    # variable 2: decodage + vitesse
+  )
+
+# Alouette (reading age) - two raters (j, l); using rater "l" for
+# consistency with Study 1
+alouette <- read_excel("data_raw/study2/study2_alouette.xlsx") %>%
+  filter(!is.na(ID)) %>%
+  mutate(ID = as.integer(ID)) %>%
+  select(ID, reading_age_months = reading_age_months_l) %>%
+  mutate(reading_age_months = as.numeric(reading_age_months))
+
+# ---- 5. Combine all individual-differences measures into one table ----
+# All ID columns are now plain integers - safe to join.
+indiv_diff <- bmrq %>%
+  full_join(popbat,   by = "ID") %>%
+  full_join(lechat,   by = "ID") %>%
+  full_join(alouette, by = "ID")
+
+# Check missingness
+indiv_diff %>%
+  summarise(across(everything(), ~ sum(is.na(.))))
+
+# ---- 6. Merge individual differences onto trial-level and SDT data ------
+trial_data <- trial_data %>% left_join(indiv_diff, by = "ID")
+sdt_data   <- sdt_data %>% left_join(indiv_diff, by = "ID")
+
+nrow(trial_data) == 1920   # confirm merge didn't duplicate rows
+
+# Sanity check the merge actually worked - this should show ZERO NAs for
+# lechat_total (everyone has a score) if the ID fix worked correctly
+sum(is.na(trial_data$lechat_total))
+
+# ---- 7. Convert ID to factor now that all joins are done -----------------
+trial_data <- trial_data %>% mutate(ID = factor(ID))
+sdt_data   <- sdt_data %>% mutate(ID = factor(ID))
+
+# ---- 8. Save combined data for the next script ---------------------------
+saveRDS(trial_data, "data_processed/study2/trial_data_combined.rds")
+saveRDS(sdt_data,   "data_processed/study2/sdt_data_combined.rds")
+
+
+write_csv(sdt_data, "data_processed/study2/sdt_data_combined.csv")
