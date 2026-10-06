@@ -10,6 +10,7 @@
 rm(list = ls())
 
 library(dplyr)
+library(tidyr)
 
 # load cleaned Study 2 data (merged all participants in df)
 data_study2 <- read.csv(
@@ -107,6 +108,8 @@ SDT <- data_study2 %>%
         response_type == "l"
     ),
     
+    Accuracy = mean(response_correct),   # NEW
+    
     .groups = "drop"
   )
 
@@ -176,6 +179,17 @@ SDT <- SDT %>%
   )
 
 #--------------------------------------------------
+# Overall accuracy per participant (both prime conditions pooled)
+#--------------------------------------------------
+
+Accuracy_overall <- data_study2 %>%
+  group_by(ID) %>%
+  summarise(
+    Accuracy_overall = mean(response_correct),
+    .groups = "drop"
+  )
+
+#--------------------------------------------------
 # Reshape SDT measures to wide format
 #--------------------------------------------------
 # Calculate the difference between the hit rate and false alarm rate
@@ -204,7 +218,8 @@ SDT_Wide <- SDT %>%
     Z_FA,
     H_minus_FA,
     d_prime,
-    c_responsebias
+    c_responsebias,
+    Accuracy
   ) %>%
   pivot_wider(
     names_from = prime_type,
@@ -217,11 +232,14 @@ SDT_Wide <- SDT %>%
       Z_FA,
       H_minus_FA,
       d_prime,
-      c_responsebias
+      c_responsebias,
+      Accuracy
     ),
     names_glue = "{.value}_{prime_type}"
   ) %>%
+  left_join(Accuracy_overall, by = "ID") %>%
   mutate(across(-ID, ~ round(.x, 3)))
+
 
 # -------------------------------------------------------
 # save SDT wide
